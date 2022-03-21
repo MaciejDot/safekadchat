@@ -1,33 +1,27 @@
-import encryption from "../../encryption/encryption";
+import encryption from "../../utils/encryption";
 import Address from "../../types/Address";
 import { KadBucket } from "../../types/KadBucket";
 import KadNode from "../../types/KadNode";
 import PrivateKey from "../../types/PrivateKey";
 import XORValue from "../../types/XORValue";
-import hashing from "../../utils/hashing";
 import xor from "../../utils/xor";
-import encryptedConnectionSocket from "./encryptedConnection/encryptedConnectionSocket";
+import encryptedConnectionSocket from "./signedConnection/encryptedConnection/encryptedConnectionSocket";
 
 function kademliaLevelSocket(){
     const {generateKey} = encryption();
-    const {sha1Array, transformToArrayBuffer} = hashing
     const {ping, getICECandidates, sendEncryptedMessage, onEncryptedMessage } = encryptedConnectionSocket;
     const clientInfo : {
         key: PrivateKey,
-        id : Int8Array
+        id : Uint8Array
     }= {
         key: {
             publicKey: "",
             privateKey: "",
             algorithm: 'ECDSA'
         },
-        id : new Int8Array(1)
+        id : new Uint8Array(1)
     }
     
-    generateKey('ECDSA').then(key=> {
-        clientInfo.key = key;
-        clientInfo.id = sha1Array(key.publicKey)
-    })
 
     const _kademliaStorage = new Map<XORValue, KadBucket>();
 
@@ -39,7 +33,7 @@ function kademliaLevelSocket(){
             _kademliaStorage.get(xorValue)?.nodes.push(node)
     };
         
-    function findLocalExactNode(id: Int8Array){
+    function findLocalExactNode(id: Uint8Array){
             const xorValue = xor(clientInfo.id, id);
             return _kademliaStorage.get(xorValue)?.nodes.find(x=> id === x.nodeId)
         };

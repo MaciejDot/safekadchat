@@ -6,7 +6,7 @@ function bitCount(n: any) {
     return (((n + (n >> 4)) & 0xf0f0f0f) * 0x1010101) >> 24;
   }
 
-export default function xor(hashA: Int8Array, hashB: Int8Array) {
+export default function xor(hashA: Uint8Array, hashB: Uint8Array) {
     let xorCount = 0;
     if (hashA.byteLength !== 20 || hashB.byteLength !== 20) {
       throw '';

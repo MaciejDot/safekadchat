@@ -1,7 +1,7 @@
 import Address from "./Address";
 
 export default interface KadNode {
-    nodeId: Int8Array,
+    nodeId: Uint8Array,
     lastKnownIP: Address,
     addressesMatrix: Address[],
 }

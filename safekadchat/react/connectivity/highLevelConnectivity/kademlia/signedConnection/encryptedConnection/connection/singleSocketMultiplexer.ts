@@ -1,8 +1,8 @@
-import Address from "../../../../types/Address";
+import Address from "../../../../../types/Address";
 import dgram from 'react-native-udp'
-import isEqual from "../../../../utils/isEqual";
-import hashing from "../../../../utils/hashing";
-import queueMap, { QueueMap } from "../../../../utils/queueMap";
+import isEqual from "../../../../../utils/isEqual";
+import hashing from "../../../../../utils/hashing";
+import queueMap, { QueueMap } from "../../../../../utils/queueMap";
 const stunServers  = [
     {
         domain: "stun.l.google.com",
@@ -11,6 +11,12 @@ const stunServers  = [
     {
         domain: "stun.stunprotocol.org",
         port: 3478
+    },
+    {
+        domain:"stun1.l.google.com", port:19302/*
+stun2.l.google.com:19302
+stun3.l.google.com:19302
+stun4.l.google.com:19302*/
     }
 ];
 
@@ -21,17 +27,27 @@ const MAX_SAFE_MESSAGE_SIZE_IN_CHARS_EXCLUDING_PARTITIONS = MAX_SAFE_MESSAGE_SIZ
 const MAX_PARTITIONS = 100;
 const MAX_SIZE_WITH_PARTITIONS_BYTES = MAX_SAFE_MESSAGE_SIZE_IN_CHARS_EXCLUDING_PARTITIONS * 4 * MAX_PARTITIONS
 const MAX_CACHE_FROM_DIFFRENT_ADDR = 1000;
-const MAX_CONCURRENT_FROM_ONE_SOURCE = 3;
-const IP_TIMEOUT = 1000;
-const PACKET_TIMEOUT =1000;
-const PACKET_PARTITION_TIMEOUT =1000;
+const MAX_CONCURRENT_FROM_ONE_SOURCE = 2;
+const IP_TIMEOUT = 1000; // timeot for holding message partitions
+const PACKET_TIMEOUT = 100;
+const PACKET_PARTITION_TIMEOUT = 0; //kill all packet partitions on overflow
 function singleSocketMultiplexer(){
     //public servers will have higher tresholds => up to 1M
     //not full messages are only beetween clients
 
     //max 1000 ips partition messages
-    const filoQueue = queueMap<string, QueueMap<string, QueueMap<number, string>>>(MAX_CACHE_FROM_DIFFRENT_ADDR, IP_TIMEOUT)
+    const filoQueue = queueMap<string, QueueMap<number, QueueMap<number, Uint8Array>>>(MAX_CACHE_FROM_DIFFRENT_ADDR, IP_TIMEOUT)
 
+    /*
+        that will be main perf issue ot will 
+        need to be written for project in java and swift
+        
+        /that needs to be rewritten/
+        methods bind, onMessage, onError
+        
+        //STUN can be written in js so no problem
+    
+        */
     const mainDgram = dgram.createSocket({
         type: 'udp4'
     });
@@ -43,7 +59,7 @@ function singleSocketMultiplexer(){
     let openForIceChange = false;
     let transactionId = new Uint8Array(12);
     let iceCandidates :Address[] = [];
-    let _handler:( (addr: Address, message: string) => void) | null= null;
+    let _handler:( (addr: Address, message: Uint8Array) => void) | null= null;
 
     function createSTUN(){
         const STUN = new Uint8Array(20);
@@ -62,13 +78,12 @@ function singleSocketMultiplexer(){
         STUN[7] = 66;
 
         /* transaction id random 12 bytes */
-        for(let index=8; index<20; index++)
-            STUN[index] = Math.floor(Math.random() * 256);
-        
-        return Object.freeze(STUN)
+        for(let index=8; index<20; index+=1)
+            {
+                STUN[index] = Math.floor(Math.random() * 256);
+            }
+        return STUN
     }
-
-    
 
     function readXORIPV4STUN(STUNResponse: Uint8Array){
         if(STUNResponse.length !== 32) return undefined
@@ -111,53 +126,34 @@ function singleSocketMultiplexer(){
             return;}
         }
 
-        const strMessage = message.toString();
+        const strMessage = message as Uint8Array;
 
-        if(strMessage.startsWith('F'))
+        if(strMessage[0] === 0)
             return _handler && _handler({
                 ip: rinfo.address,
                 port: rinfo.port,
                 kind: rinfo.family.toLowerCase() as any
-            }, strMessage.substring(1, strMessage.length))
-        if(strMessage.startsWith('P')){
-            const split = strMessage.split('-');
-            if(split.length < 5){
-                return;
-            }
-            const partitions = Number(split[2]);
-            const index = Number(split[1]);
-            const partition = split.slice(4, split.length).reduce((a,b) => a+ '-'+b);
-            const fullHash = split[3];
-            if(isNaN(partitions) || isNaN(index))
-                return;
-
+            }, strMessage.slice(1, strMessage.length))
+        if(strMessage[0] === 2){
+           //1,i,sum_0,sum_1,sum_2,sum_3,partitions,
+            const partitions = strMessage[6];
+            const index = strMessage[1];
+            const partition = strMessage.slice(7, strMessage.length);
+            const fullHash = strMessage[2] +strMessage[3] *256 +strMessage[4] * 256 * 256 + strMessage[5] * 256 * 256 * 256;
+           
             const ipKey = `${rinfo.address}:${rinfo.port}`;
-            let node = filoQueue.getNode(ipKey);
+            const node = filoQueue.getOrAddNodeAndUpdateTime(ipKey,()=> queueMap<number, QueueMap<number, Uint8Array>>(MAX_CONCURRENT_FROM_ONE_SOURCE, PACKET_TIMEOUT));
             if(partitions > MAX_PARTITIONS || partitions < 2)
             {
                 return;
             }
-            if(!node)
-            {
-                node = queueMap<string, QueueMap<number, string>>(MAX_CONCURRENT_FROM_ONE_SOURCE, PACKET_TIMEOUT);
-                filoQueue.addNode(ipKey, node);
-            }
-            filoQueue.updateTimestamp(ipKey)
-            let innerNode = node.getNode(fullHash)
-            if(!innerNode)
-            {
-                innerNode = queueMap<number,string>(partitions, PACKET_PARTITION_TIMEOUT);
-                node.addNode(fullHash, innerNode)
-            }
-            node.updateTimestamp(fullHash)
-    
-                    innerNode.addNode(index, partition)
+            const innerNode = node.getOrAddNodeAndUpdateTime(fullHash,()=> queueMap<number,Uint8Array>(partitions, PACKET_PARTITION_TIMEOUT));
+            innerNode.addNode(index, partition)
                     if(innerNode.size() === partitions){
                         const all = innerNode.getAll();
-                        const deserialized = all.sort((a,b) => a.key - b.key).map(x=>x.value).reduce((a,b)=> a+b);
+                        const deserialized = new Uint8Array(all.sort((a,b) => a.key - b.key).flatMap(x=>[...x.value]))
                         innerNode.clear();
                         node.remove(fullHash);
-                        hashing.sha1String(deserialized) &&
                          _handler && _handler({
                             ip: rinfo.address,
                             port: rinfo.port,
@@ -179,19 +175,22 @@ function singleSocketMultiplexer(){
         mainDgram.send(STUN, 0, 160, port, server)
     }
 
-    function sendFull(to:Address, message: string){
-        const buff = Buffer.from(`F${message}`, "utf-8")
-        mainDgram.send(buff, 0 , buff.length, to.port ,to.ip)
+    function sendFull(to:Address, message: Uint8Array){
+        mainDgram.send(new Uint8Array([0, ...message]), 0 , message.byteLength + 1, to.port ,to.ip)
     }
 
-    function partitionAndSend(to:Address, message: string){
+    function partitionAndSend(to:Address, message: Uint8Array){
         const partitions = Math.ceil(message.length / MAX_SAFE_MESSAGE_SIZE_IN_CHARS_EXCLUDING_PARTITIONS)
-        const fullHash = hashing.sha1String(message);
+        
+        const sum_0 = Math.floor(Math.random()*256)
+        const sum_1 = Math.floor(Math.random()*256)
+        const sum_2 = Math.floor(Math.random()*256)
+        const sum_3 = Math.floor(Math.random()*256)
         for(let i=0; i<partitions; i++)
         {
-            const partition = message.substring(i* MAX_SAFE_MESSAGE_SIZE_IN_CHARS_EXCLUDING_PARTITIONS, (i+1) * MAX_SAFE_MESSAGE_SIZE_IN_CHARS_EXCLUDING_PARTITIONS);
-            const buff = Buffer.from(`P-${i}-${partitions}-${fullHash}-${partition}`, "utf-8")
-            mainDgram.send(buff, 0 , buff.length, to.port ,to.ip)
+            const partition = message.slice(i* MAX_SAFE_MESSAGE_SIZE_IN_CHARS_EXCLUDING_PARTITIONS, (i+1) * MAX_SAFE_MESSAGE_SIZE_IN_CHARS_EXCLUDING_PARTITIONS);
+    
+            mainDgram.send(new Uint8Array([2,i,sum_0,sum_1,sum_2,sum_3,partitions, ...partition]), 0 , partition.length + 7, to.port ,to.ip)
         }
     }
 
@@ -223,14 +222,13 @@ function singleSocketMultiplexer(){
             })
                 
         },
-        onMessage ( handler: (from: Address, message: string) => void | Promise<void>){
+        onMessage ( handler: (from: Address, message: Uint8Array) => void | Promise<void>){
             _handler = handler;
         },
-        sendMessage(to:Address, message: string){
-            const buff = Buffer.from(message, "utf-8")
-            if(buff.length > MAX_SIZE_WITH_PARTITIONS_BYTES)
-                throw "";
-            if(buff.length > MAX_SAFE_MESSAGE_SIZE_IN_BYTES)
+        sendMessage(to:Address, message: Uint8Array){
+            if(message.byteLength > MAX_SIZE_WITH_PARTITIONS_BYTES)
+                throw new Error("Too long messages");
+            if(message.byteLength > MAX_SAFE_MESSAGE_SIZE_IN_BYTES)
                 return partitionAndSend(to, message);
             sendFull(to, message)
         }

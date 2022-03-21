@@ -44,6 +44,24 @@ export default function queueMap<Key, T>(queueCapacity: number, timeout: number)
         if(node)
             node.timestamp = Date.now()
     }
-    return {getNode, addNode, size, remove, clear, getAll,updateTimestamp}
+
+    function getOrAddNodeAndUpdateTime(key:Key, valueFactory:()=>T){
+        let node = getNode(key);
+        if(!node){
+            node = valueFactory();
+            addNode(key,node)
+        }
+        updateTimestamp(key)
+        node;
+    }
+    return {
+        
+        getOrAddNodeAndUpdateTime ,getNode, addNode, size, remove, clear, getAll,updateTimestamp} as QueueMap<Key,T>
+};
+export interface QueueMap<Key, T> {
+    getOrAddNodeAndUpdateTime: (key:Key, valueFactory: ()=>T) =>T,
+    getNode: (key:Key) => T | undefined
+    addNode: (key: Key,node:T) => void, 
+    size: ()=> number, remove:(key:Key)=>void, clear:()=>void, getAll:() =>{key:Key, value:T}[],
+    updateTimestamp:(key:Key) => void
 }
-export type QueueMap<Key, T> = ReturnType<typeof queueMap<Key, T>>

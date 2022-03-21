@@ -26,20 +26,21 @@ import {
   LearnMoreLinks,
   ReloadInstructions,
 } from 'react-native/Libraries/NewAppScreen';
-import singleSocketMultiplexer from './react/connectivity/highLevelConnectivity/kademlia/encryptedConnection/connection/singleSocketMultiplexer';
+//import singleSocketMultiplexer from './react/connectivity/highLevelConnectivity/kademlia/encryptedConnection/connection/singleSocketMultiplexer';
 import Address from './react/connectivity/types/Address';
-
+import * as forge from 'node-forge'
+import PolyfillCrypto from 'react-native-webview-crypto'
+import 'react-native-get-random-values'
+import encryption from './react/connectivity/utils/encryption';
+import wrapping from './react/connectivity/utils/wrapping';
 const Section: React.FC<{
   title: string;
 }> = ({children, title}) => {
   const isDarkMode = useColorScheme() === 'dark';
-  const [array, setArray] = useState<Address[]>([])
-  useEffect(()=>{
-    singleSocketMultiplexer.getICECandidates().then(ice => setArray(ice))
-  },[])
+ 
   return (
     <View style={styles.sectionContainer}>
-      {array.map(elem => <Text>{elem.ip}:{elem.port}</Text>)}
+    
       <Text
         style={[
           styles.sectionTitle,
@@ -69,9 +70,33 @@ const App = () => {
     backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
   };
 
+  const [array, setArray] = useState<Address[]>([])
+  
+  useEffect(()=>{
+   // singleSocketMultiplexer.getICECandidates(true).then(ice => setArray(ice))
+  },[])
+
+  useEffect(()=>{
+    
+   // console.log(crypto, crypto.subtle)
+    init()  },[])
+
+  async function init(){
+    const enc = encryption();
+    const bobKey = await enc.generateKey();
+    const aliceKey = await enc.generateKey();
+    const secretAlice  = await enc.secret(bobKey.publicKey, aliceKey.privateKey);
+    const secretBob = await enc.secret(aliceKey.publicKey, bobKey.privateKey) ;
+    const encrypted =  await enc.encryptString('hey', secretAlice);
+    const decrypted = await enc.decryptString(encrypted, secretBob);
+   const pkdf2 =await wrapping().getWrapingKey("any", wrapping().getSalt())
+    console.log(pkdf2);
+  }
+
   return (
     <SafeAreaView style={backgroundStyle}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         style={backgroundStyle}>
@@ -80,6 +105,7 @@ const App = () => {
           style={{
             backgroundColor: isDarkMode ? Colors.black : Colors.white,
           }}>
+            {array.map(elem => <Text key={elem.ip}>{elem.ip}:{elem.port}</Text>)}
           <Section title="Step One">
             Edit <Text style={styles.highlight}>App.tsx</Text> to change this
             screen and then come back to see your edits.
@@ -107,7 +133,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 24,
-    fontWeight: '600',
+    fontWeight: '600',  
   },
   sectionDescription: {
     marginTop: 8,
@@ -118,5 +144,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+function Wrapper(){
+  return <>
+    <PolyfillCrypto/>
+    <App/>
+  </>
+}
 
-export default App;
+export default Wrapper;
