@@ -1,5 +1,6 @@
 {
   "dependencies": {
-    "buffer": "^6.0.3"
+    "buffer": "^6.0.3",
+    "react-native-ble-manager": "^8.0.2"
   }
 }

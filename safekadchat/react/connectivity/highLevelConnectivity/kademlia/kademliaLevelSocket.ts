@@ -5,38 +5,108 @@ import KadNode from "../../types/KadNode";
 import PrivateKey from "../../types/PrivateKey";
 import XORValue from "../../types/XORValue";
 import xor from "../../utils/xor";
-import encryptedConnectionSocket from "./signedConnection/encryptedConnection/encryptedConnectionSocket";
+import encryptedConnectionSocket from "./encryptedConnection/encryptedConnectionSocket";
+import kademliaStorage, { KademliaStorage } from "./kademliaStorage/kademliaStorage";
+
+const STATIC_ARRAY_OF_BOOTSTRAP = [{
+    ip: '192.168.1.123',
+    port: 16000}] as const;
+
+const MESSAGES_TYPES = {
+    getNode: 0,
+    sendBackNodes: 1,
+    requestInfo: 2,
+}
 
 function kademliaLevelSocket(){
-    const {generateKey} = encryption();
-    const {ping, getICECandidates, sendEncryptedMessage, onEncryptedMessage } = encryptedConnectionSocket;
-    const clientInfo : {
-        key: PrivateKey,
-        id : Uint8Array
-    }= {
-        key: {
-            publicKey: "",
-            privateKey: "",
-            algorithm: 'ECDSA'
-        },
-        id : new Uint8Array(1)
-    }
-    
+    const { ping, getICECandidates, sendEncryptedMessage, onEncryptedMessage, onPong, sendEncryptedMessageToId, getId } = encryptedConnectionSocket;
 
-    const _kademliaStorage = new Map<XORValue, KadBucket>();
+    const MAX_UDP_TIMEOUT = 1000 * 30;
 
-    for(let xorIndex = 0; xorIndex < 161; xorIndex += 1)
-        _kademliaStorage.set(xorIndex as XORValue, { nodes: []})
-      
-    function addNode(node: KadNode){
-            const xorValue = xor(clientInfo.id, node.nodeId);
-            _kademliaStorage.get(xorValue)?.nodes.push(node)
-    };
+    function serializeNode(node: KadNode){
+        function serializePort(port: number){
+            return new Uint8Array([ port & 0xff, port >> 8])
+        }
+
+        function serializeAddress(address: Address){
+            return new Uint8Array([
+                ...address.ip.split('.').map(x => parseInt(x)),
+                ...serializePort(address.port)
+            ])
+        }
         
-    function findLocalExactNode(id: Uint8Array){
-            const xorValue = xor(clientInfo.id, id);
-            return _kademliaStorage.get(xorValue)?.nodes.find(x=> id === x.nodeId)
-        };
+        return new Uint8Array([
+            ...node.nodeId,
+            ...serializeAddress(node.lastConnectedIP),
+        ]);
+    }
+
+    let _kademliaStorage: KademliaStorage;
+
+    const _dynamicBootstraps = [];
+
+    const _messagesTypesHandlers = {
+        [MESSAGES_TYPES.getNode]: getNodeHandler,
+    }
+
+    const _messagesTypesSenders = {
+        getNode: (address: Address, nodeId: Uint8Array) => sendEncryptedMessage(address, new Uint8Array([MESSAGES_TYPES.getNode ,...nodeId])),
+        requestInfo: (address: Address) => sendEncryptedMessage(address, new Uint8Array([MESSAGES_TYPES.requestInfo])), 
+        sendBackNodes: (address: Address, id: Uint8Array, nodes: KadNode[]) => sendEncryptedMessageToId(id, address, new Uint8Array([MESSAGES_TYPES.sendBackNodes, ...(nodes.flatMap(x=>[...serializeNode(x)])) ])),
+    } as const
+
+    function getNodeHandler(from: Address, id: Uint8Array, message: Uint8Array){
+        const singleNode = _kademliaStorage.getExactNode(message);
+        if(singleNode && singleNode.timestamp + MAX_UDP_TIMEOUT > Date.now()){
+            return _messagesTypesSenders.sendBackNodes(from, id, [ singleNode.node ]);
+        }
+        const availableNodes = _kademliaStorage.getClosestNode(message);
+        return _messagesTypesSenders.sendBackNodes(from, id, availableNodes.map(x=>({
+            nodeId: x.id,
+            lastConnectedIP: x.lastKnownIp,
+        })));
+
+    }
+
+    onEncryptedMessage((from: Address, id: Uint8Array, message: Uint8Array) => {
+        try {
+            _messagesTypesHandlers[message[0]](from, id, message.slice(1));
+            _kademliaStorage.getOrAddNodeAndUpdate(id, () =>({
+                nodeId: id,
+                lastConnectedIP: from
+            }))
+        }
+        catch{}
+    })
+
+    async function stabilizeKademlia(){}
+
+    async function connectToBootstrap(bootstrapSource: { ip:string, port: number}[])
+    {
+
+    }
+
+
+    async function initialize(){
+        //GET ROUTER (WILL BE IN RAM)
+        //GET STORAGE (PARTLY WILL BE IN RAM PARTLY IN FILE STORAGE - dont really need full)
+        //GET BOOTSTRAP
+        const id = await getId();
+        _kademliaStorage = kademliaStorage(id)
+
+        if(_dynamicBootstraps.length){
+            //return;
+        }
+        else{
+            (Math.random() * STATIC_ARRAY_OF_BOOTSTRAP.length)
+        }
+
+        stabilizeKademlia();
+
+        
+    }
+
+    initialize();
 
     return {
         buildKademlia(){},
@@ -47,7 +117,7 @@ function kademliaLevelSocket(){
                 ping(node.lastKnownIP)
             }
         },
-        pingAddress(address: Address){ping(address)},
+        ping,
         sendToLowNode(nodeId: string, message: string){
             const node = findLocalExactNode(transformToArrayBuffer(nodeId));
             if(node){

@@ -81,7 +81,7 @@ export default function encryption(){
             return crypto.subtle.importKey('raw', key, { name:'ECDH', namedCurve:'P-521' }, true, ['deriveBits', 'deriveKey'])
         }
 
-        function secret(publicKey: CryptoKey, privateKey: CryptoKey){
+        function secret(publicKey: CryptoKey, privateKey: CryptoKey, randBits: Uint8Array){
             return crypto.subtle.deriveBits({
                 name: "ECDH",
                 namedCurve: "P-521",
@@ -89,7 +89,7 @@ export default function encryption(){
             },
             privateKey, 
             521
-        ).then(r=> crypto.subtle.digest('SHA-256', r))
+        ).then(r=> crypto.subtle.digest('SHA-256', [ ...new Uint8Array(r), ...randBits ]))
         .then(r=> crypto.subtle.importKey('raw', r, {name:'AES-CBC'}, true, ['encrypt', 'decrypt']))
         };
         async function encryptString(message: string, secret: CryptoKey, inEncoding: BufferEncoding = 'utf-8', outEncoding: BufferEncoding = 'base64'){

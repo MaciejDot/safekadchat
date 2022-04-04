@@ -1,8 +1,8 @@
-import Address from "../../../../../types/Address";
+import Address from "../../../../types/Address";
 import dgram from 'react-native-udp'
-import isEqual from "../../../../../utils/isEqual";
-import hashing from "../../../../../utils/hashing";
-import queueMap, { QueueMap } from "../../../../../utils/queueMap";
+import isEqual from "../../../../utils/isEqual";
+import hashing from "../../../../utils/hashing";
+import queueMap, { QueueMap } from "../../../../utils/queueMap";
 const stunServers  = [
     {
         domain: "stun.l.google.com",

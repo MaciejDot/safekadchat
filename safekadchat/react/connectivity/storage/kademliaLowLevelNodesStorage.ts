@@ -29,7 +29,7 @@ function kademliaLowLevelNodesStorage(){
         setAddress(id: Int8Array, address: Address){
             const xorValue = xor(clientInfo.getClientId(), id);
             const node = _kademliaStorage.get(xorValue)?.nodes.find(x=> id === x.nodeId)
-            if(node) node.lastKnownIP = address
+            if(node) node.lastConnectedIP = address
         },
         findClosestNode(){},
         findExactNode(id: Int8Array){
