@@ -7,21 +7,40 @@ import XORValue from "../../types/XORValue";
 import xor from "../../utils/xor";
 import encryptedConnectionSocket from "./encryptedConnection/encryptedConnectionSocket";
 import kademliaStorage, { KademliaStorage } from "./kademliaStorage/kademliaStorage";
-
-const STATIC_ARRAY_OF_BOOTSTRAP = [{
-    ip: '192.168.1.123',
-    port: 16000}] as const;
+import bootstrapStorage from "./bootstrapStorage/bootstrapStorage";
 
 const MESSAGES_TYPES = {
-    getNode: 0,
-    sendBackNodes: 1,
+    getNode: 0, // get node by id
+    sendBackNodes: 1, // send back nodes
     requestInfo: 2,
-}
+    sendInfo: 3,
+    requestTunnel: 4,
+    getNodesByXOR: 5, // get nodes by xor
+    // establish contract for communication intensities and number 
+    // of messages that can be sent without receiving a response before the connection is closed
+    // add timeout
+} as const
 
 function kademliaLevelSocket(){
-    const { ping, getICECandidates, sendEncryptedMessage, onEncryptedMessage, onPong, sendEncryptedMessageToId, getId } = encryptedConnectionSocket;
+    const { ping, getICECandidates, 
+        sendEncryptedMessage, addEncryptedMessageListener, 
+        addEncryptedConnectionSetupListener,
+        removePongListener,
+        addPongListener, sendEncryptedMessageToId, getId } = encryptedConnectionSocket;
 
     const MAX_UDP_TIMEOUT = 1000 * 30;
+
+    addEncryptedConnectionSetupListener((from, id)=>{
+        // also add contract information
+        _kademliaStorage.addNode({
+            lastConnectedIP:from,
+            nodeId: id,
+        });
+        _messagesTypesSenders.requestInfo(from);
+        // schedule next ping
+        // schedule next node request more often if xor is small
+        _messagesTypesSenders.getNodesByXOR(from, _kademliaStorage.xorValuesForStabilization());
+    })
 
     function serializeNode(node: KadNode){
         function serializePort(port: number){
@@ -43,7 +62,7 @@ function kademliaLevelSocket(){
 
     let _kademliaStorage: KademliaStorage;
 
-    const _dynamicBootstraps = [];
+    const _bootstrap = bootstrapStorage();
 
     const _messagesTypesHandlers = {
         [MESSAGES_TYPES.getNode]: getNodeHandler,
@@ -53,6 +72,7 @@ function kademliaLevelSocket(){
         getNode: (address: Address, nodeId: Uint8Array) => sendEncryptedMessage(address, new Uint8Array([MESSAGES_TYPES.getNode ,...nodeId])),
         requestInfo: (address: Address) => sendEncryptedMessage(address, new Uint8Array([MESSAGES_TYPES.requestInfo])), 
         sendBackNodes: (address: Address, id: Uint8Array, nodes: KadNode[]) => sendEncryptedMessageToId(id, address, new Uint8Array([MESSAGES_TYPES.sendBackNodes, ...(nodes.flatMap(x=>[...serializeNode(x)])) ])),
+        getNodesByXOR: (address: Address, xor: XORValue[]) => sendEncryptedMessage(address, new Uint8Array([MESSAGES_TYPES.getNodesByXOR, ...xor])),
     } as const
 
     function getNodeHandler(from: Address, id: Uint8Array, message: Uint8Array){
@@ -68,8 +88,9 @@ function kademliaLevelSocket(){
 
     }
 
-    onEncryptedMessage((from: Address, id: Uint8Array, message: Uint8Array) => {
+    addEncryptedMessageListener((from: Address, id: Uint8Array, message: Uint8Array) => {
         try {
+            //@ts-ignore
             _messagesTypesHandlers[message[0]](from, id, message.slice(1));
             _kademliaStorage.getOrAddNodeAndUpdate(id, () =>({
                 nodeId: id,
@@ -79,37 +100,45 @@ function kademliaLevelSocket(){
         catch{}
     })
 
-    async function stabilizeKademlia(){}
-
-    async function connectToBootstrap(bootstrapSource: { ip:string, port: number}[])
+    async function connectToBootstrap()
     {
+        const nodes = _bootstrap.getRandomBootstrapNodesSeries();
+        let endCondition = false;
+        function onPongListener (from: Address) {
+            if(nodes.includes(from)){
+                endCondition = true;
+            }
+        }
+        const listener = addPongListener(onPongListener);
+        for(let i = 0; i < nodes.length/3; i++)
+        {
+            const nodesToBootstrap = nodes.slice(i*3, Math.min(i*3+3, nodes.length));
+            for(let bootstrap of nodesToBootstrap)
+            {
+                ping(bootstrap);
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            if(endCondition)
+            {
+                break;
+            }
+        }
+        removePongListener(listener);
 
     }
 
 
     async function initialize(){
-        //GET ROUTER (WILL BE IN RAM)
-        //GET STORAGE (PARTLY WILL BE IN RAM PARTLY IN FILE STORAGE - dont really need full)
-        //GET BOOTSTRAP
         const id = await getId();
         _kademliaStorage = kademliaStorage(id)
-
-        if(_dynamicBootstraps.length){
-            //return;
-        }
-        else{
-            (Math.random() * STATIC_ARRAY_OF_BOOTSTRAP.length)
-        }
-
-        stabilizeKademlia();
-
-        
+        // start pinging bootstrap nodes
+        connectToBootstrap();
+        // wake up kademlia and resume communication and contracts
     }
 
     initialize();
 
     return {
-        buildKademlia(){},
         getICECandidates,
         pingNode(nodeId: string){
             const node = findLocalExactNode(transformToArrayBuffer(nodeId));

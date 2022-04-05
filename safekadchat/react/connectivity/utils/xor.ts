@@ -8,10 +8,10 @@ function bitCount(n: any) {
 
 export default function xor(hashA: Uint8Array, hashB: Uint8Array) {
     let xorCount = 0;
-    if (hashA.byteLength !== 20 || hashB.byteLength !== 20) {
+    if (hashA.byteLength !== 32 || hashB.byteLength !== 32) {
       throw '';
     }
-    for (let i = 0; i < 20; i += 1) {
+    for (let i = 0; i < 32; i += 1) {
       xorCount += bitCount(hashA[i] ^ hashB[i]);
     }
     return xorCount as XORValue;

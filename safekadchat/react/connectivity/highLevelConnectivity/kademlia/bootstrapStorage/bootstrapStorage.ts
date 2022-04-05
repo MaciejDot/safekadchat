@@ -1,23 +1,31 @@
+import Address from "../../../types/Address";
 
 
 function bootstrapStorage() {
     const _staticBootstrapNodes = [{
         ip: '192.168.1.123',
+        kind: 'ipv4',
         port: 16000}] as const;
     
-    const _foundBootstrapNodes: {
-        ip:string,
-        port:number
-    }[ ]= [];
+    const _foundBootstrapNodes: Address[ ]= [];
 
-    //first connect to the found bootstrap nodes if failed then connect to the static bootstrap nodes
-    function getRandomBootstrapNode() {
-        return _foundBootstrapNodes.length > 0 ? _foundBootstrapNodes : _staticBootstrapNodes;
+
+    function allShuffledNodes(){
+        const allNodes = [..._staticBootstrapNodes, ..._foundBootstrapNodes];
+        for (let i = allNodes.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [allNodes[i], allNodes[j]] = [allNodes[j], allNodes[i]];
+        }
+        return allNodes;
+    }
+
+    function getRandomBootstrapNodesSeries() {
+        return allShuffledNodes();
     }
 
     return {
-        getRandomBootstrapNode
+        getRandomBootstrapNodesSeries
     }
 }
 
-export default bootstrapStorage();
+export default bootstrapStorage;

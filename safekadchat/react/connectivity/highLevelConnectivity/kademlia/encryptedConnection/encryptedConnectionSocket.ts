@@ -70,9 +70,9 @@ function encryptedConnectionSocket(){
             cookieA: Uint8Array
         }
     >(MAX_PENDING_ENCRYPTED_CONTEXTS, MAX_PENDING_TIMEOUT);
-
-    let _handler:( (from: Address, id: Uint8Array, message: Uint8Array) => void) | null= null;
-    let _pongHandler:( (from: Address) => void) | null= null;
+    const _onConnected:Map<number, ((address: Address, id: Uint8Array) => void)> = new Map();
+    const _handler:Map<number, ( (from: Address, id: Uint8Array, message: Uint8Array) => void)>= new Map();
+    const _pongHandler:Map<number, ( (from: Address) => void)>= new Map();
     const { getICECandidates, sendMessage, onMessage } = singleSocketMultiplexer
    
     onMessage((from, message)=>{
@@ -139,7 +139,7 @@ function encryptedConnectionSocket(){
         const recivedHash = decrypted.slice(decrypted.length - 32, decrypted.length);
         const actualHash = await hashing.hash(decryptedWithoutHash);
         if(isEqual(recivedHash, actualHash))
-            _handler && _handler(from, node.otherPartyId, decryptedWithoutHash);
+            _handler.forEach(handler=> {try { handler(from, node.otherPartyId, decryptedWithoutHash)} catch{}})
     }
 
     async function responseHelloHandler(from:Address, message: Uint8Array){
@@ -215,7 +215,7 @@ function encryptedConnectionSocket(){
     async function pongHandler(from: Address){
         const node = _contextsQueue.getNode(key(from));
         _contextsQueue.updateTimestamp(key(from))
-        _pongHandler && _pongHandler(from)
+        _pongHandler.forEach(handler=> {try { handler(from)} catch{}})
         if(!node){
             const cookieA = random().randomArray(COOKIE_LENGTH);
             _contextsQueue.addNode(key(from), { justStarted: true, cookieA })
@@ -232,13 +232,16 @@ function encryptedConnectionSocket(){
     }
 
     function onSafeChannel(addr: Address){
+        
         const node = _cache.popNode(key(addr))
         if(!node)
             return;
+      
         node.forEach(message => _messagesTypesSenders.sendEncrypted(addr, message))
         const ctxNode = _contextsQueue.getNode(key(addr));
         if(!ctxNode || ctxNode.justStarted)
             return;
+        _onConnected.forEach(handler=> {try { handler(addr, ctxNode.otherPartyId)} catch{}})
         const idNode = _idCache.popNode(idKey(addr, ctxNode.otherPartyId));
         if(!idNode)
             return;
@@ -278,14 +281,36 @@ function encryptedConnectionSocket(){
                 _messagesTypesSenders.sendEncrypted(to, unencryptedMessage, id);
         },
 
-        onEncryptedMessage(handler:(from: Address, id: Uint8Array, message: Uint8Array) => void){
-            _handler = handler;
+        addEncryptedConnectionSetupListener(handler: (from: Address, id: Uint8Array) => void){
+            const id = Math.random();
+            _onConnected.set(id, handler);
+            return id;
+        },
+
+        removeEncryptedConnectionSetupListener(id: number){
+            _onConnected.delete(id);
+        },
+
+        addEncryptedMessageListener(handler:(from: Address, id: Uint8Array, message: Uint8Array) => void){
+            const id = Math.random();
+            _handler.set(id, handler);
+            return id;
+        },
+
+        removeEncryptedMessageListener(id: number){
+            _handler.delete(id);
         },
 
         getId,
 
-        onPong(handler:(from: Address) => void){
-            _pongHandler = handler
+        addPongListener(handler:(from: Address) => void){
+            const id = Math.random();
+            _pongHandler.set(id, handler);
+            return id;
+        },
+
+        removePongListener(id: number){
+            _pongHandler.delete(id);
         }
     }
 }
